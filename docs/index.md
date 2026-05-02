@@ -34,10 +34,6 @@ A versão completa da política está disponível em:
 
 Este aplicativo também faz parte de um projeto open source voltado a estudo, aprendizado em Flutter e apoio espiritual.
 
-Mais informações:
-
-- [README do projeto](https://github.com/danielfransa/app_caixinha_de_promessa/blob/master/README.md)
-- [Guia de publicação Play Store](./play_store_publicacao.html)
 
 ## Licença
 
