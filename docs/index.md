@@ -36,7 +36,7 @@ Este aplicativo também faz parte de um projeto open source voltado a estudo, ap
 
 Mais informações:
 
-- [README do projeto](../README.md)
+- [README do projeto](https://github.com/danielfransa/app_caixinha_de_promessa/blob/master/README.md)
 - [Guia de publicação Play Store](./play_store_publicacao.html)
 
 ## Licença
