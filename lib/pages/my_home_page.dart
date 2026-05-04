@@ -1,7 +1,17 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../data/promises_repository.dart';
 import '../models/promise.dart';
+import 'about_page.dart';
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
@@ -15,6 +25,7 @@ class _MyHomePageState extends State<MyHomePage>
   static const String currentLanguage = 'pt-BR';
 
   final PromisesRepository repository = PromisesRepository();
+  final GlobalKey _promiseCardKey = GlobalKey();
 
   late final AnimationController _animationController;
   late final Animation<double> _boxAnimation;
@@ -22,6 +33,7 @@ class _MyHomePageState extends State<MyHomePage>
   bool isLoading = true;
   bool isBoxOpen = false;
   bool isPromiseVisible = false;
+  bool isHandlingImageAction = false;
   String? errorMessage;
   List<Promise> promises = <Promise>[];
   Promise? selectedPromise;
@@ -66,7 +78,7 @@ class _MyHomePageState extends State<MyHomePage>
       }
 
       setState(() {
-        errorMessage = 'Nao foi possivel carregar as promessas.';
+        errorMessage = 'Não foi possível carregar as promessas.';
         isLoading = false;
       });
     }
@@ -134,6 +146,228 @@ class _MyHomePageState extends State<MyHomePage>
     await _drawPromise();
   }
 
+  String _buildShareText(Promise promise) {
+    return '${promise.description}\n\n${promise.source} • ${promise.version}';
+  }
+
+  Future<void> _copyPromiseText() async {
+    final promise = selectedPromise;
+    if (promise == null) {
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: _buildShareText(promise)));
+
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Promessa copiada com sucesso.')),
+    );
+  }
+
+  Future<Uint8List?> _capturePromiseCardBytes() async {
+    final context = _promiseCardKey.currentContext;
+    if (context == null) {
+      return null;
+    }
+
+    final boundary = context.findRenderObject() as RenderRepaintBoundary?;
+    if (boundary == null) {
+      return null;
+    }
+
+    final image = await boundary.toImage(pixelRatio: 3);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return byteData?.buffer.asUint8List();
+  }
+
+  Future<File?> _writeCardImageToTemp() async {
+    final bytes = await _capturePromiseCardBytes();
+    if (bytes == null) {
+      return null;
+    }
+
+    final tempDir = await getTemporaryDirectory();
+    final file = File('${tempDir.path}/promessa_compartilhar.png');
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
+  Future<void> _sharePromiseText() async {
+    final promise = selectedPromise;
+    if (promise == null) {
+      return;
+    }
+
+    await SharePlus.instance.share(
+      ShareParams(text: _buildShareText(promise)),
+    );
+  }
+
+  Future<void> _sharePromiseImage() async {
+    if (selectedPromise == null || isHandlingImageAction) {
+      return;
+    }
+
+    setState(() {
+      isHandlingImageAction = true;
+    });
+
+    try {
+      final file = await _writeCardImageToTemp();
+      if (file == null) {
+        throw Exception('Não foi possível gerar a imagem do card.');
+      }
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+        ),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível compartilhar a imagem agora.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isHandlingImageAction = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _savePromiseImage() async {
+    if (selectedPromise == null || isHandlingImageAction) {
+      return;
+    }
+
+    setState(() {
+      isHandlingImageAction = true;
+    });
+
+    try {
+      var hasAccess = await Gal.hasAccess(toAlbum: true);
+      if (!hasAccess) {
+        hasAccess = await Gal.requestAccess(toAlbum: true);
+      }
+
+      if (!hasAccess) {
+        throw Exception('Sem permissão para salvar na galeria.');
+      }
+
+      final file = await _writeCardImageToTemp();
+      if (file == null) {
+        throw Exception('Não foi possível gerar a imagem do card.');
+      }
+
+      await Gal.putImage(file.path, album: 'Caixinha de Promessas');
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Imagem salva na galeria.')),
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível salvar a imagem na galeria.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isHandlingImageAction = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildPromiseCard(Promise promise) {
+    return RepaintBoundary(
+      key: _promiseCardKey,
+      child: Card(
+        color: Colors.white,
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              Text(
+                promise.description,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 20,
+                  height: 1.4,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                promise.source,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.brown.shade700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                promise.version,
+                style: TextStyle(fontSize: 14, color: Colors.brown.shade400),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPromiseActions() {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _copyPromiseText,
+          icon: const Icon(Icons.copy_all_rounded),
+          label: const Text('Copiar'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _sharePromiseText,
+          icon: const Icon(Icons.shortcut_rounded),
+          label: const Text('Compartilhar texto'),
+        ),
+        OutlinedButton.icon(
+          onPressed: isHandlingImageAction ? null : _sharePromiseImage,
+          icon: const Icon(Icons.image_outlined),
+          label: const Text('Compartilhar imagem'),
+        ),
+        OutlinedButton.icon(
+          onPressed: isHandlingImageAction ? null : _savePromiseImage,
+          icon: const Icon(Icons.download_rounded),
+          label: const Text('Salvar imagem'),
+        ),
+      ],
+    );
+  }
+
   @override
   void dispose() {
     _animationController.dispose();
@@ -148,12 +382,30 @@ class _MyHomePageState extends State<MyHomePage>
         title: const Text('Caixinha de Promessas'),
         centerTitle: true,
         backgroundColor: Colors.brown.shade200,
+        actions: [
+          IconButton(
+            tooltip: 'Sobre o aplicativo',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const AboutPage(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.info_outline_rounded),
+          ),
+        ],
       ),
       body:
           isLoading
               ? const Center(child: CircularProgressIndicator())
               : SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.fromLTRB(
+                  24,
+                  24,
+                  24,
+                  40 + MediaQuery.of(context).padding.bottom,
+                ),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
@@ -231,44 +483,12 @@ class _MyHomePageState extends State<MyHomePage>
                                               ),
                                             ),
                                   )
-                                  : Card(
-                                    elevation: 3,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(24),
-                                      child: Column(
-                                        children: [
-                                          Text(
-                                            selectedPromise!.description,
-                                            textAlign: TextAlign.center,
-                                            style: const TextStyle(
-                                              fontSize: 20,
-                                              height: 1.4,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 16),
-                                          Text(
-                                            selectedPromise!.source,
-                                            style: TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.brown.shade700,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          Text(
-                                            selectedPromise!.version,
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              color: Colors.brown.shade400,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
+                                  : Column(
+                                    children: [
+                                      _buildPromiseCard(selectedPromise!),
+                                      const SizedBox(height: 16),
+                                      _buildPromiseActions(),
+                                    ],
                                   ),
                         ),
                       ],
